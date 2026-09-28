@@ -5,12 +5,13 @@ import (
 	"os"
 	"testing"
 
+	"terraform-provider-jira-automation/internal/client"
+
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
-// testAccCheckRuleResourceDestroy verifies that all test rules are DISABLED
-// after terraform destroy (the API has no DELETE endpoint).
+// testAccCheckRuleResourceDestroy verifies that test rules are gone after terraform destroy.
 func testAccCheckRuleResourceDestroy(s *terraform.State) error {
 	c, err := testAccNewClient()
 	if err != nil {
@@ -21,12 +22,12 @@ func testAccCheckRuleResourceDestroy(s *terraform.State) error {
 		if rs.Type != "jira-automation_rule" {
 			continue
 		}
-		rule, err := c.GetRule(rs.Primary.ID)
-		if err != nil {
-			return fmt.Errorf("getting rule %s: %w", rs.Primary.ID, err)
+		_, err := c.GetRule(rs.Primary.ID)
+		if err == nil {
+			return fmt.Errorf("rule %s still exists after destroy", rs.Primary.ID)
 		}
-		if rule.State != "DISABLED" {
-			return fmt.Errorf("rule %s still %s, expected DISABLED", rs.Primary.ID, rule.State)
+		if !client.IsNotFound(err) {
+			return fmt.Errorf("getting rule %s: %w", rs.Primary.ID, err)
 		}
 	}
 	return nil
@@ -129,14 +130,14 @@ func TestAccRuleResource_disableEnable(t *testing.T) {
 	})
 }
 
-func TestAccRuleResource_destroyDisables(t *testing.T) {
+func TestAccRuleResource_destroyDeletes(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheckWithProjectID(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		CheckDestroy:             testAccCheckRuleResourceDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccRuleResourceConfig_basic("tf-acc-destroy-disables"),
+				Config: testAccRuleResourceConfig_basic("tf-acc-destroy-deletes"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("jira-automation_rule.test", "state", "ENABLED"),
 				),

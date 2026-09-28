@@ -14,7 +14,7 @@ The Jira Automation provider lets you manage [Jira Automation](https://www.atlas
 terraform {
   required_providers {
     jira-automation = {
-      source = "registry.terraform.io/alc0der/jira-automation"
+      source = "registry.terraform.io/liatrio-labs/jira-automation"
     }
   }
 }

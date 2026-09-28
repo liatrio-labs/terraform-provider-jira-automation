@@ -123,7 +123,7 @@ Create a directory for your project (e.g. `my-jira/`) and add a file called `mai
 terraform {
   required_providers {
     jira-automation = {
-      source = "registry.terraform.io/beno/jira-automation"
+      source = "registry.terraform.io/liatrio-labs/jira-automation"
     }
   }
 }
@@ -213,6 +213,21 @@ resource "jira-automation_rule" "example" {
 
 `trigger_json` and `components_json` use semantic JSON comparison, so whitespace and key ordering differences won't show as drift.
 
+Component `value` shapes differ by type. `codebarrel.action.log` and `jira.jql.condition` both take a **plain string**. Do not send `{ "jql": "..." }` for a JQL condition; that returns HTTP 500.
+
+```hcl
+components_json = jsonencode([
+  {
+    component     = "CONDITION"
+    schemaVersion = 1
+    type          = "jira.jql.condition"
+    value         = "project = FOO AND status != Done"
+  }
+])
+```
+
+Omit `urlSecure` and webhook header `id` from config. Jira adds those on GET; the provider strips them on read. Secure headers and incoming webhook tokens read back as `***`; the provider restores the prior config value so that is not drift. After import, replace any `***` in generated config with the real secret.
+
 #### Component types
 
 Structured `component` block types that replace raw JSON with simple HCL arguments:
@@ -281,7 +296,7 @@ terraform plan
 
 #### Destroy behavior
 
-The Jira Automation API has **no DELETE endpoint**. Running `terraform destroy` will **disable** the rule instead of deleting it. A warning is shown when this happens.
+`terraform destroy` disables the rule, then deletes it. The public API only accepts DELETE after the rule is disabled.
 
 ## Data Sources
 
@@ -366,7 +381,7 @@ CI runs unit tests on all pushes and PRs. Acceptance tests run on pushes to `mai
 
 #### Cleanup
 
-Acceptance test rules accumulate as disabled rules (the API has no DELETE endpoint). Periodically clean via Jira UI by filtering on the `tf-acc-test` label.
+Acceptance tests delete rules on destroy. If a run is interrupted, leftover rules are labeled `tf-acc-test` and can be removed in the Jira UI.
 
 ## Troubleshooting
 
@@ -381,3 +396,24 @@ Acceptance test rules accumulate as disabled rules (the API has no DELETE endpoi
 **401 Unauthorized** — Check that your email and API token are correct. API tokens are created at https://id.atlassian.com/manage-profile/security/api-tokens.
 
 **No changes detected after modifying JSON** — The JSON fields use normalized comparison. If only whitespace or key order changed, Terraform correctly sees no diff.
+
+**Perpetual webhook drift (`urlSecure` or header `id`)** — Leave those fields out of config. The provider strips API defaults on read.
+
+**Secure header or webhook token shows as `***`** — Expected on GET. The provider restores the prior config value. After import, put the real secret in config once.
+
+**JQL condition returns 500** — `value` must be a plain JQL string, not `{ jql = "..." }`.
+
+## Publishing a release
+
+This fork publishes as `registry.terraform.io/liatrio-labs/jira-automation` (GitHub repo `liatrio-labs/terraform-provider-jira-automation`).
+
+1. Confirm GitHub secrets `GPG_PRIVATE_KEY` and `PASSPHRASE` exist on this repository.
+2. Register the provider on the [Terraform Registry](https://registry.terraform.io/publish/provider) against this repo if it is not registered yet.
+3. Tag a new version and push it. Do not retag or replace an existing version; that causes checksum errors:
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+4. The Release workflow runs GoReleaser, signs checksums, and uploads GitHub release assets. The Registry ingests that release.

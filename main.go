@@ -18,7 +18,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/beno/jira-automation",
+		Address: "registry.terraform.io/liatrio-labs/jira-automation",
 		Debug:   debug,
 	}
 

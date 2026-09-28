@@ -52,7 +52,7 @@ TF_ACC=1 go test ./internal/provider/ -v -run TestAccRuleResource_basic -timeout
 
 ### Cleanup
 
-Acceptance test rules accumulate as disabled rules (the API has no DELETE endpoint). Periodically clean via Jira UI by filtering on the `tf-acc-test` label.
+Acceptance tests delete rules on destroy. If a run is interrupted, leftover rules are labeled `tf-acc-test` and can be removed in the Jira UI.
 
 ## Dev Override
 

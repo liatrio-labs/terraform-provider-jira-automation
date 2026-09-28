@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"terraform-provider-jira-automation/internal/client"
+	"terraform-provider-jira-automation/internal/normalize"
 )
 
 // extractUUIDFromURL extracts a rule UUID from a Jira Automation URL.
@@ -252,7 +253,7 @@ func parseAndStrip(raw json.RawMessage) interface{} {
 	if err := dec.Decode(&v); err != nil {
 		return nil
 	}
-	stripAPIFields(v)
+	normalize.StripAPIFields(v)
 	return v
 }
 
@@ -265,7 +266,7 @@ func parseAndStripArray(raws []json.RawMessage) interface{} {
 		if err := dec.Decode(&v); err != nil {
 			continue
 		}
-		stripAPIFields(v)
+		normalize.StripAPIFields(v)
 		arr = append(arr, v)
 	}
 	return arr
@@ -326,28 +327,5 @@ func renderHCLExpr(v interface{}, level int) string {
 		return b.String()
 	default:
 		return fmt.Sprintf("%v", v)
-	}
-}
-
-// stripAPIFields recursively removes API-assigned fields from component JSON.
-func stripAPIFields(v interface{}) {
-	m, ok := v.(map[string]interface{})
-	if !ok {
-		return
-	}
-
-	delete(m, "id")
-	delete(m, "parentId")
-	delete(m, "conditionParentId")
-
-	if children, ok := m["children"].([]interface{}); ok {
-		for _, child := range children {
-			stripAPIFields(child)
-		}
-	}
-	if conditions, ok := m["conditions"].([]interface{}); ok {
-		for _, cond := range conditions {
-			stripAPIFields(cond)
-		}
 	}
 }

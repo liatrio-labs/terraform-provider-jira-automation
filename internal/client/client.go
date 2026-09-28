@@ -3,12 +3,32 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// NotFoundError is returned when a rule UUID does not exist.
+type NotFoundError struct {
+	Op   string
+	UUID string
+}
+
+func (e *NotFoundError) Error() string {
+	if e.Op == "" {
+		return fmt.Sprintf("rule %s not found", e.UUID)
+	}
+	return fmt.Sprintf("%s rule %s: not found", e.Op, e.UUID)
+}
+
+// IsNotFound reports whether err is a NotFoundError.
+func IsNotFound(err error) bool {
+	var n *NotFoundError
+	return errors.As(err, &n)
+}
 
 type Client struct {
 	BaseURL        string
@@ -73,6 +93,9 @@ func (c *Client) GetRuleRaw(uuid string) (json.RawMessage, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &NotFoundError{Op: "get", UUID: uuid}
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("get rule returned %d: %s", resp.StatusCode, string(body))
@@ -532,9 +555,38 @@ func (c *Client) SetRuleState(uuid string, enabled bool) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return &NotFoundError{Op: "set state", UUID: uuid}
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("set rule state returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// DeleteRule deletes a disabled rule. The public API only accepts DELETE after
+// the rule is disabled. 404 is treated as success (already gone). Requests go
+// through do(), which always sets Content-Type: application/json.
+func (c *Client) DeleteRule(uuid string) error {
+	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+"/rule/"+uuid, nil)
+	if err != nil {
+		return fmt.Errorf("building delete rule request: %w", err)
+	}
+
+	resp, err := c.do(req)
+	if err != nil {
+		return fmt.Errorf("deleting rule %s: %w", uuid, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete rule returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

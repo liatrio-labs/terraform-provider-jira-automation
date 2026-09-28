@@ -133,6 +133,15 @@ No `{"rule": ...}` envelope needed. The schema is `RuleStateUpdateRequest` with 
 
 An expired token on this endpoint returns `400` (not `401`), same as the main rule endpoints.
 
+## DELETE /rule/{uuid}
+
+The public API deletes a rule only after it is disabled.
+
+1. `PUT /rule/{uuid}/state` with `{"value": "DISABLED"}`
+2. `DELETE /rule/{uuid}`
+
+`DELETE` requires `Content-Type: application/json` even with no body. 404 means the rule is already gone.
+
 ## API Token Expiry
 
 The `ATLASSIAN_TOKEN` has a short lifetime. An expired token returns `401: "Unauthorized"` on reads and `400: "The request body could not be parsed"` on writes. Always verify auth with a quick GET before debugging write failures.
@@ -185,7 +194,7 @@ Full schemas are in `component-types.schema.json`. Here are the most commonly ne
 **Conditions:**
 - `jira.issue.condition` (sv3) — issue field check (NOT_EMPTY, EQUALS, etc.). Limited custom field support.
 - `jira.comparator.condition` (sv1) — smart values comparison. Better for custom fields. `{"first": "{{...}}", "second": "", "operator": "NOT_EQUALS"}`
-- `jira.jql.condition` (sv1) — JQL check. `{"jql": "..."}`
+- `jira.jql.condition` (sv1) — JQL check. Value is a **plain string**, not an object. `{"jql": "..."}` returns 500.
 - `jira.condition.container.block` + `jira.condition.if.block` — IF/ELSE structure (see "IF Condition Structure" above)
 
 **Actions:**

@@ -214,7 +214,7 @@
           "x-schema-version": 1,
           "type": "object",
           "properties": {
-            "webhookToken": { "type": "string" },
+            "webhookToken": { "type": "string", "description": "Redacted to *** on reads. The provider restores the prior state value to avoid drift." },
             "searchOrProvide": { "type": "string", "enum": ["provided", "search"] },
             "jql": { "type": ["string", "null"] }
           }
@@ -271,11 +271,8 @@
           "x-type": "jira.jql.condition",
           "x-ui-name": "JQL condition",
           "x-schema-version": 1,
-          "type": "object",
-          "properties": {
-            "jql": { "type": "string" }
-          },
-          "required": ["jql"]
+          "type": "string",
+          "description": "Value is a plain JQL string, not an object. Sending {\"jql\": \"...\"} returns 500."
         },
         "ConditionValue_user": {
           "x-type": "jira.user.condition",
@@ -499,14 +496,15 @@
           "type": "object",
           "properties": {
             "url": { "type": "string" },
+            "urlSecure": { "type": "boolean", "description": "API-default false. Omit from Terraform config; the provider strips it on read." },
             "headers": {
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
-                  "id": { "type": ["string", "null"] },
+                  "id": { "type": ["string", "null"], "description": "API-assigned. Omit from Terraform config; the provider strips it on read." },
                   "name": { "type": "string" },
-                  "value": { "type": "string", "description": "Redacted to *** on reads if headerSecure=true" },
+                  "value": { "type": "string", "description": "Redacted to *** on reads if headerSecure=true. The provider restores the prior state value to avoid drift." },
                   "headerSecure": { "type": "boolean" }
                 }
               }

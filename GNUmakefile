@@ -1,8 +1,8 @@
 HOSTNAME=registry.terraform.io
-NAMESPACE=beno
+NAMESPACE=liatrio-labs
 NAME=jira-automation
 BINARY=terraform-provider-${NAME}
-VERSION=0.1.0
+VERSION=0.3.0
 OS_ARCH=$(shell go env GOOS)_$(shell go env GOARCH)
 
 default: install
@@ -34,6 +34,6 @@ lint-env:
 	@if [ -f .env ]; then dotenv-linter check --schema .env.schema --ignore-checks UnorderedKey .env && dotenv-linter diff .env.example .env; fi
 
 dev.tfrc: build
-	@printf 'provider_installation {\n  dev_overrides {\n    "registry.terraform.io/beno/jira-automation" = "%s"\n  }\n  direct {}\n}\n' "$(CURDIR)" > dev.tfrc
+	@printf 'provider_installation {\n  dev_overrides {\n    "registry.terraform.io/liatrio-labs/jira-automation" = "%s"\n  }\n  direct {}\n}\n' "$(CURDIR)" > dev.tfrc
 
 .PHONY: build install test testacc generate docs golden lint-env

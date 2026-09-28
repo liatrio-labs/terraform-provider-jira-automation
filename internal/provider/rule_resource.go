@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"terraform-provider-jira-automation/internal/client"
+	"terraform-provider-jira-automation/internal/normalize"
 
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -55,7 +56,7 @@ func (r *ruleResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 func (r *ruleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a Jira Automation rule. Note: the public API has no DELETE endpoint, so terraform destroy will disable the rule instead of deleting it.",
+		Description: "Manages a Jira Automation rule. terraform destroy disables the rule, then deletes it.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
@@ -240,8 +241,12 @@ func (r *ruleResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	// Read back the created rule to populate computed fields (scope, state, etc.).
-	diags = r.readIntoModel(ctx, uuid, &plan)
+	notFound, diags := r.readIntoModel(ctx, uuid, &plan)
 	resp.Diagnostics.Append(diags...)
+	if notFound {
+		resp.Diagnostics.AddError("Error reading rule", "rule not found after create")
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -250,8 +255,12 @@ func (r *ruleResource) Create(ctx context.Context, req resource.CreateRequest, r
 	r.syncManagedLabel(ctx, uuid, plan, &resp.Diagnostics)
 
 	// Re-read to pick up the label.
-	diags = r.readIntoModel(ctx, uuid, &plan)
+	notFound, diags = r.readIntoModel(ctx, uuid, &plan)
 	resp.Diagnostics.Append(diags...)
+	if notFound {
+		resp.Diagnostics.AddError("Error reading rule", "rule not found after create")
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -266,8 +275,12 @@ func (r *ruleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	diags := r.readIntoModel(ctx, state.ID.ValueString(), &state)
+	notFound, diags := r.readIntoModel(ctx, state.ID.ValueString(), &state)
 	resp.Diagnostics.Append(diags...)
+	if notFound {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -321,8 +334,12 @@ func (r *ruleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	// Read back the updated rule.
-	diags := r.readIntoModel(ctx, uuid, &plan)
+	notFound, diags := r.readIntoModel(ctx, uuid, &plan)
 	resp.Diagnostics.Append(diags...)
+	if notFound {
+		resp.Diagnostics.AddError("Error reading rule", "rule not found after update")
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -331,8 +348,12 @@ func (r *ruleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	r.syncManagedLabel(ctx, uuid, plan, &resp.Diagnostics)
 
 	// Re-read to pick up the label.
-	diags = r.readIntoModel(ctx, uuid, &plan)
+	notFound, diags = r.readIntoModel(ctx, uuid, &plan)
 	resp.Diagnostics.Append(diags...)
+	if notFound {
+		resp.Diagnostics.AddError("Error reading rule", "rule not found after update")
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -347,24 +368,34 @@ func (r *ruleResource) Delete(_ context.Context, req resource.DeleteRequest, res
 		return
 	}
 
-	// No DELETE endpoint in the public API — disable the rule instead.
+	// Disable first: DELETE only succeeds on a disabled rule.
 	uuid := state.ID.ValueString()
-	if err := r.client.SetRuleState(uuid, false); err != nil {
-		resp.Diagnostics.AddError("Error disabling rule on destroy",
-			fmt.Sprintf("The Jira Automation API has no DELETE endpoint. Attempted to disable rule %s instead, but got error: %s", uuid, err.Error()))
+	disableErr := r.client.SetRuleState(uuid, false)
+	if client.IsNotFound(disableErr) {
 		return
 	}
 
-	resp.Diagnostics.AddWarning("Rule disabled, not deleted",
-		fmt.Sprintf("Rule %s was disabled because the Jira Automation API does not support deletion. You may want to manually remove it from the Jira UI.", uuid))
+	if err := r.client.DeleteRule(uuid); err != nil {
+		msg := err.Error()
+		if disableErr != nil {
+			msg = fmt.Sprintf("disable: %s; delete: %s", disableErr.Error(), err.Error())
+		}
+		resp.Diagnostics.AddError("Error deleting rule",
+			fmt.Sprintf("Failed to delete rule %s: %s", uuid, msg))
+		return
+	}
 }
 
 func (r *ruleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	uuid := req.ID
 
 	var model ruleResourceModel
-	diags := r.readIntoModel(ctx, uuid, &model)
+	notFound, diags := r.readIntoModel(ctx, uuid, &model)
 	resp.Diagnostics.Append(diags...)
+	if notFound {
+		resp.Diagnostics.AddError("Error importing rule", fmt.Sprintf("rule %s not found", uuid))
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -373,14 +404,19 @@ func (r *ruleResource) ImportState(ctx context.Context, req resource.ImportState
 }
 
 // readIntoModel fetches a rule by UUID and populates the model.
-func (r *ruleResource) readIntoModel(ctx context.Context, uuid string, model *ruleResourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
-
+// notFound is true when the API returns 404.
+func (r *ruleResource) readIntoModel(ctx context.Context, uuid string, model *ruleResourceModel) (notFound bool, diags diag.Diagnostics) {
 	rule, err := r.client.GetRule(uuid)
 	if err != nil {
+		if client.IsNotFound(err) {
+			return true, diags
+		}
 		diags.AddError("Error reading rule", err.Error())
-		return diags
+		return false, diags
 	}
+
+	priorTrigger := priorJSONString(model.TriggerJSON)
+	priorComponents := priorJSONString(model.ComponentsJSON)
 
 	model.ID = types.StringValue(rule.UUID)
 	model.Name = types.StringValue(rule.Name)
@@ -411,7 +447,7 @@ func (r *ruleResource) readIntoModel(ctx context.Context, uuid string, model *ru
 		triggerType, args, err := ParseTrigger(rule.Trigger)
 		if err != nil {
 			diags.AddError("Error parsing trigger from API", err.Error())
-			return diags
+			return false, diags
 		}
 		argsMap, d := types.MapValueFrom(ctx, types.StringType, args)
 		diags.Append(d...)
@@ -423,9 +459,14 @@ func (r *ruleResource) readIntoModel(ctx context.Context, uuid string, model *ru
 		triggerNorm, err := normalizeRawJSON(rule.Trigger)
 		if err != nil {
 			diags.AddError("Error normalizing trigger", err.Error())
-			return diags
+			return false, diags
 		}
-		model.TriggerJSON = jsontypes.NewNormalizedValue(triggerNorm)
+		restored, err := normalize.RestoreRedactedJSON(triggerNorm, priorTrigger)
+		if err != nil {
+			diags.AddError("Error restoring trigger secrets", err.Error())
+			return false, diags
+		}
+		model.TriggerJSON = jsontypes.NewNormalizedValue(restored)
 	}
 
 	// Components — if the user used the structured components block, parse the API
@@ -434,19 +475,24 @@ func (r *ruleResource) readIntoModel(ctx context.Context, uuid string, model *ru
 		parsed, err := ParseComponents(rule.Components, ctx, r.client.ReverseAliases)
 		if err != nil {
 			diags.AddError("Error parsing components from API", err.Error())
-			return diags
+			return false, diags
 		}
 		model.Components = parsed
 	} else {
 		componentsNorm, err := normalizeRawJSONArray(rule.Components)
 		if err != nil {
 			diags.AddError("Error normalizing components", err.Error())
-			return diags
+			return false, diags
 		}
-		model.ComponentsJSON = jsontypes.NewNormalizedValue(componentsNorm)
+		restored, err := normalize.RestoreRedactedJSON(componentsNorm, priorComponents)
+		if err != nil {
+			diags.AddError("Error restoring component secrets", err.Error())
+			return false, diags
+		}
+		model.ComponentsJSON = jsontypes.NewNormalizedValue(restored)
 	}
 
-	return diags
+	return false, diags
 }
 
 // resolveTriggerJSON returns the trigger JSON from either the structured trigger
@@ -517,7 +563,7 @@ func normalizeRawJSON(raw json.RawMessage) (string, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return "", err
 	}
-	stripAPIFields(v)
+	normalize.StripAPIFields(v)
 	out, err := json.Marshal(v)
 	if err != nil {
 		return "", err
@@ -532,7 +578,7 @@ func normalizeRawJSONArray(raws []json.RawMessage) (string, error) {
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return "", err
 		}
-		stripAPIFields(v)
+		normalize.StripAPIFields(v)
 		arr = append(arr, v)
 	}
 	out, err := json.Marshal(arr)
@@ -542,47 +588,11 @@ func normalizeRawJSONArray(raws []json.RawMessage) (string, error) {
 	return string(out), nil
 }
 
-// stripAPIFields recursively removes API-assigned/enriched fields from JSON
-// so the normalized output matches the Terraform config (which doesn't include them).
-func stripAPIFields(v interface{}) {
-	m, ok := v.(map[string]interface{})
-	if !ok {
-		return
+func priorJSONString(v jsontypes.Normalized) string {
+	if v.IsNull() || v.IsUnknown() {
+		return ""
 	}
-
-	// Remove structural IDs and computed fields.
-	delete(m, "id")
-	delete(m, "parentId")
-	delete(m, "conditionParentId")
-	delete(m, "connectionId")
-
-	// Remove empty containers the API always adds.
-	if children, ok := m["children"].([]interface{}); ok {
-		if len(children) == 0 {
-			delete(m, "children")
-		} else {
-			for _, child := range children {
-				stripAPIFields(child)
-			}
-		}
-	}
-	if conditions, ok := m["conditions"].([]interface{}); ok {
-		if len(conditions) == 0 {
-			delete(m, "conditions")
-		} else {
-			for _, cond := range conditions {
-				stripAPIFields(cond)
-			}
-		}
-	}
-
-	// Remove API-enriched fields from trigger/component values.
-	// The API adds eventFilters, eventKey, issueEvent to trigger values.
-	if val, ok := m["value"].(map[string]interface{}); ok {
-		delete(val, "eventFilters")
-		delete(val, "eventKey")
-		delete(val, "issueEvent")
-	}
+	return v.ValueString()
 }
 
 func toStringSlice(ctx context.Context, list types.List) []string {

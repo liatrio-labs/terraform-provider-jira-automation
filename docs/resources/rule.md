@@ -113,6 +113,33 @@ resource "jira-automation_rule" "conditional_comment" {
 
 When the HCL helpers don't cover your trigger or action type, use `trigger_json` and `components_json` directly. The provider performs semantic JSON comparison so key order and whitespace are ignored during plan.
 
+Component `value` shapes differ by type. A log action and a JQL condition both take a **plain string**. Sending an object such as `{ jql = "..." }` for `jira.jql.condition` returns HTTP 500.
+
+```terraform
+resource "jira-automation_rule" "jql_condition" {
+  name       = "JQL condition example"
+  project_id = "10001"
+
+  trigger_json = jsonencode({
+    component     = "TRIGGER"
+    schemaVersion = 1
+    type          = "jira.issue.event.trigger:created"
+    value         = {}
+  })
+
+  components_json = jsonencode([
+    {
+      component     = "CONDITION"
+      schemaVersion = 1
+      type          = "jira.jql.condition"
+      value         = "project = FOO AND status != Done"
+    }
+  ])
+}
+```
+
+Omit API-default webhook fields such as `urlSecure` and header `id`. The provider strips them on read. Secure header values and incoming webhook tokens come back as `***`; the provider restores the prior config value so that does not show as drift. After import, replace any `***` placeholders with the real secret once.
+
 ```terraform
 resource "jira-automation_rule" "json_fallback" {
   name       = "My Rule"
@@ -183,4 +210,4 @@ terraform plan -generate-config-out=generated.tf
 
 ~> **Labels:** The provider automatically tags managed rules with `managed-by:terraform`. You must create this label in the Jira UI first (Project Settings → Automation → Labels). Labels cannot be set via Terraform config — use the Jira UI to manage labels.
 
-~> The Jira Automation API has no DELETE endpoint. Running `terraform destroy` will **disable** the rule instead of deleting it.
+~> `terraform destroy` disables the rule, then deletes it. The public API only accepts DELETE after the rule is disabled.

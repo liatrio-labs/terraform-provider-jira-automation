@@ -28,4 +28,4 @@ var (
 	_ resource.ResourceWithImportState = &ruleResource{}
 )
 
-// PLACEHOLDER_TRUNCATED
+// FILE_TRUNCATED_FOR_TOOL_LIMIT
